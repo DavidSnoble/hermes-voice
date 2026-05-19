@@ -11,7 +11,7 @@ import pytest
 from hermes_voice.domain.entities import AudioInput, Conversation
 from hermes_voice.infrastructure.cartesia_tts import CartesiaTTSAdapter
 from hermes_voice.infrastructure.deepgram_stt import DeepgramSTTAdapter
-from hermes_voice.infrastructure.openrouter_llm import OpenRouterLLMAdapter
+from hermes_voice.infrastructure.hermes_gateway_llm import HermesGatewayLLMAdapter
 
 pytestmark = pytest.mark.integration
 
@@ -33,10 +33,10 @@ def cartesia_key() -> str:
 
 
 @pytest.fixture
-def llm_key() -> str:
-    key = os.environ.get("LLM_API_KEY")
+def hermes_api_key() -> str:
+    key = os.environ.get("HERMES_API_KEY")
     if not key:
-        pytest.skip("LLM_API_KEY not set")
+        pytest.skip("HERMES_API_KEY not set")
     return key
 
 
@@ -70,8 +70,8 @@ async def test_cartesia_synthesize(cartesia_key: str) -> None:
 
 
 @pytest.mark.asyncio
-async def test_openrouter_generate(llm_key: str) -> None:
-    adapter = OpenRouterLLMAdapter(api_key=llm_key)
+async def test_hermes_gateway_generate(hermes_api_key: str) -> None:
+    adapter = HermesGatewayLLMAdapter(api_key=hermes_api_key)
     conv = Conversation()
     conv.add_message("user", "Say exactly 'pong' and nothing else.")
     try:

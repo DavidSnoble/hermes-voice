@@ -1,27 +1,30 @@
+"""Hermes Voice Agent."""
 import httpx
 
 from hermes_voice.domain.entities import Conversation
 from hermes_voice.domain.ports import LLMPort
 
 
-class OpenRouterLLMAdapter(LLMPort):
-    """OpenRouter-compatible LLM adapter (works with OpenAI, Anthropic, etc.)."""
+class HermesGatewayLLMAdapter(LLMPort):
+    """LLM adapter that calls the Hermes gateway's /v1/chat/completions endpoint.
+
+    This lets the voice app use the gateway's configured provider (e.g. opencode-go)
+    without needing its own API key to that provider.
+    """
 
     def __init__(
         self,
         api_key: str,
-        model: str = "openai/gpt-4o-mini",
-        base_url: str = "https://openrouter.ai/api/v1",
+        base_url: str = "http://localhost:8642",
+        model: str = "kimi-k2.6",
     ) -> None:
         self._api_key = api_key
-        self._model = model
         self._base_url = base_url.rstrip("/")
+        self._model = model
         self._client = httpx.AsyncClient(
             headers={
                 "Authorization": f"Bearer {api_key}",
                 "Content-Type": "application/json",
-                "HTTP-Referer": "https://voice.dsnoble.com",
-                "X-Title": "Hermes Voice",
             },
             timeout=httpx.Timeout(60.0),
         )
@@ -37,7 +40,7 @@ class OpenRouterLLMAdapter(LLMPort):
         }
 
         response = await self._client.post(
-            f"{self._base_url}/chat/completions",
+            f"{self._base_url}/v1/chat/completions",
             json=payload,
         )
         response.raise_for_status()

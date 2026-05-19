@@ -20,15 +20,12 @@ from hermes_voice.infrastructure.hermes_context_provider import HermesContextPro
 from hermes_voice.infrastructure.hermes_gateway_adapter import HermesGatewayAdapter
 from hermes_voice.infrastructure.llm_intent_classifier import LLMIntentClassifier
 from hermes_voice.infrastructure.memory_repo import InMemoryConversationRepository
-from hermes_voice.infrastructure.openrouter_llm import OpenRouterLLMAdapter
+from hermes_voice.infrastructure.hermes_gateway_llm import HermesGatewayLLMAdapter
 
 
 class Settings(BaseSettings):
     deepgram_api_key: str
     cartesia_api_key: str
-    llm_api_key: str
-    llm_base_url: str = "https://openrouter.ai/api/v1"
-    llm_model: str = "openai/gpt-4o-mini"
     hermes_api_key: str = ""
     hermes_api_url: str = "http://127.0.0.1:8642"
     voice_port: int = 9120
@@ -55,10 +52,14 @@ def get_tts(settings: Settings = get_settings()) -> TTSPort:
 
 
 def get_llm(settings: Settings = get_settings()) -> LLMPort:
-    return OpenRouterLLMAdapter(
-        api_key=settings.llm_api_key,
-        model=settings.llm_model,
-        base_url=settings.llm_base_url,
+    if not settings.hermes_api_key:
+        raise ValueError(
+            "HERMES_API_KEY not configured. "
+            "Enable the Hermes API server with API_SERVER_ENABLED=true and API_SERVER_KEY=xxx"
+        )
+    return HermesGatewayLLMAdapter(
+        api_key=settings.hermes_api_key,
+        base_url=settings.hermes_api_url,
     )
 
 
@@ -72,10 +73,14 @@ def get_context_provider(settings: Settings = get_settings()) -> ContextProvider
 
 
 def get_intent_classifier(settings: Settings = get_settings()) -> IntentClassifierPort:
+    if not settings.hermes_api_key:
+        raise ValueError(
+            "HERMES_API_KEY not configured. "
+            "Enable the Hermes API server with API_SERVER_ENABLED=true and API_SERVER_KEY=xxx"
+        )
     return LLMIntentClassifier(
-        api_key=settings.llm_api_key,
-        model=settings.llm_model,
-        base_url=settings.llm_base_url,
+        api_key=settings.hermes_api_key,
+        base_url=f"{settings.hermes_api_url}/v1/chat/completions",
     )
 
 
