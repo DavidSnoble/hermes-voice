@@ -59,6 +59,11 @@
             border-color: #ef4444;
             animation: pulse 1.2s infinite;
         }
+        .mic-btn.hearing {
+            background: #16a34a;
+            border-color: #22c55e;
+            animation: pulse 0.8s infinite;
+        }
         @keyframes pulse {
             0%, 100% { box-shadow: 0 0 0 0 rgba(220, 38, 38, 0.5); }
             50% { box-shadow: 0 0 0 25px rgba(220, 38, 38, 0); }
@@ -90,7 +95,7 @@
         <button class="mic-btn" id="micBtn" aria-label="Hold to talk">🎙️</button>
         <div class="transcript" id="transcript"></div>
     </div>
-    <div class="hint">Hold while speaking · Release to send</div>
+        <div class="hint">Hold while speaking · Auto-releases after 1.5s of silence</div>
     <script src="/static/app.js"></script>
 </body>
 </html>
