@@ -43,34 +43,38 @@ Voice App (lightweight)                    Hermes Gateway (full power)
 
 ## Prerequisites: Enable Hermes API Server
 
-The voice app delegates complex tasks to your existing Hermes gateway. You must
-enable the built-in API server:
+The voice app delegates complex tasks to your existing Hermes gateway. The gateway must have its built-in API server enabled.
 
-1. Set environment variables in your Hermes process:
-   ```bash
-   export API_SERVER_ENABLED=true
-   export API_SERVER_KEY=your_secret_key_here
-   export API_SERVER_PORT=8642
-   export API_SERVER_HOST=127.0.0.1
-   ```
+**Good news**: if your Hermes is already running, the API server is likely already active on port 8642. Verify:
 
-2. Restart the Hermes gateway:
-   ```bash
-   systemctl restart hermes-dashboard  # or however you run Hermes
-   ```
+```bash
+curl http://127.0.0.1:8642/health
+```
 
-3. Verify it's running:
-   ```bash
-   curl http://127.0.0.1:8642/health
-   ```
+If you see `{"status": "ok"}`, you're ready.
+
+If not, set these environment variables and restart:
+
+```bash
+export API_SERVER_ENABLED=true
+export API_SERVER_KEY=your_secret_key_here
+export API_SERVER_PORT=8642
+export API_SERVER_HOST=127.0.0.1
+systemctl restart hermes-gateway
+```
 
 ## Quick Start
 
 ### 1. Sign up for API keys
 
-- [Deepgram](https://console.deepgram.com/signup) — Speech-to-Text
-- [Cartesia](https://play.cartesia.ai/) — Text-to-Speech
-- [OpenRouter](https://openrouter.ai/keys) — LLM (for intent classifier + fast responses)
+You only need **2 external keys** (not 3). The voice app uses your existing Hermes gateway for LLM calls, so no separate OpenRouter/opencode-go key is needed.
+
+| Service | What it does | Sign up |
+|---------|-------------|---------|
+| **Deepgram** | Speech-to-Text | [console.deepgram.com/signup](https://console.deepgram.com/signup) |
+| **Cartesia** | Text-to-Speech | [play.cartesia.ai](https://play.cartesia.ai/) |
+
+The voice app will use your Hermes gateway (already running on `localhost:8642`) as its LLM backend.
 
 ### 2. Install
 
