@@ -57,6 +57,12 @@ class ProcessVoiceMessage:
         # 1. STT
         transcript: Transcript = await self._stt.transcribe(audio)
 
+        # Guard: empty transcript = nothing to process
+        if not transcript.text.strip():
+            audio_output = await self._tts.synthesize("I didn't catch that. Could you say it again?")
+            conversation = Conversation(id=conversation_id or uuid4())
+            return audio_output, conversation, None
+
         # 2. Load context + conversation
         agent_context: AgentContext = await self._context_provider.load()
         system_prompt = agent_context.build_system_prompt()

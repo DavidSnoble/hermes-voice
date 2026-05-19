@@ -18,7 +18,7 @@ from hermes_voice.infrastructure.cartesia_tts import CartesiaTTSAdapter
 from hermes_voice.infrastructure.deepgram_stt import DeepgramSTTAdapter
 from hermes_voice.infrastructure.hermes_context_provider import HermesContextProvider
 from hermes_voice.infrastructure.hermes_gateway_adapter import HermesGatewayAdapter
-from hermes_voice.infrastructure.llm_intent_classifier import LLMIntentClassifier
+from hermes_voice.infrastructure.keyword_intent_classifier import KeywordIntentClassifier
 from hermes_voice.infrastructure.memory_repo import InMemoryConversationRepository
 from hermes_voice.infrastructure.hermes_gateway_llm import HermesGatewayLLMAdapter
 
@@ -73,15 +73,7 @@ def get_context_provider(settings: Settings = get_settings()) -> ContextProvider
 
 
 def get_intent_classifier(settings: Settings = get_settings()) -> IntentClassifierPort:
-    if not settings.hermes_api_key:
-        raise ValueError(
-            "HERMES_API_KEY not configured. "
-            "Enable the Hermes API server with API_SERVER_ENABLED=true and API_SERVER_KEY=xxx"
-        )
-    return LLMIntentClassifier(
-        api_key=settings.hermes_api_key,
-        base_url=f"{settings.hermes_api_url}/v1/chat/completions",
-    )
+    return KeywordIntentClassifier()
 
 
 def get_hermes_gateway(settings: Settings = get_settings()) -> HermesGatewayPort:
