@@ -1,7 +1,15 @@
 from abc import ABC, abstractmethod
 from uuid import UUID
 
-from hermes_voice.domain.entities import AudioInput, AudioOutput, Conversation, Transcript
+from hermes_voice.domain.entities import (
+    AudioInput,
+    AudioOutput,
+    Conversation,
+    HermesContext,
+    Intent,
+    Task,
+    Transcript,
+)
 
 
 class STTPort(ABC):
@@ -44,4 +52,50 @@ class ConversationRepository(ABC):
 
     @abstractmethod
     async def delete(self, conversation_id: UUID) -> None:
+        ...
+
+
+class ContextProvider(ABC):
+    """Port: Loads the full Hermes startup context (persona + user + env)."""
+
+    @abstractmethod
+    async def load(self) -> HermesContext:
+        """Load all context sources and return a unified HermesContext."""
+        ...
+
+
+class IntentClassifierPort(ABC):
+    """Port: Classifies a user message into an Intent (conversation/quick_tool/delegate)."""
+
+    @abstractmethod
+    async def classify(self, transcript: str, conversation: Conversation) -> Intent:
+        """Classify the user's intent."""
+        ...
+
+
+class TaskDispatcherPort(ABC):
+    """Port: Spawns background sub-agents for delegated tasks."""
+
+    @abstractmethod
+    async def dispatch(
+        self,
+        task_description: str,
+        hermes_context: HermesContext,
+        conversation: Conversation,
+    ) -> Task:
+        """Dispatch a background task and return a Task handle."""
+        ...
+
+    @abstractmethod
+    async def poll(self, task_id: UUID) -> Task | None:
+        """Check the status of a background task."""
+        ...
+
+
+class NotificationPort(ABC):
+    """Port: Pushes proactive notifications to the user (e.g., task completed)."""
+
+    @abstractmethod
+    async def notify(self, message: str, audio: AudioOutput | None = None) -> None:
+        """Send a notification. Audio is optional but preferred for voice UX."""
         ...

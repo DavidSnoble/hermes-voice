@@ -1,4 +1,4 @@
-/** Hermes Voice — Push-to-Talk WebSocket Client */
+/** Hermes Voice — Push-to-Talk WebSocket Client with proactive notifications */
 
 const statusEl = document.getElementById('status');
 const micBtn = document.getElementById('micBtn');
@@ -10,6 +10,7 @@ let audioChunks = [];
 let audioContext = null;
 let isRecording = false;
 let reconnectTimer = null;
+let activeTasks = 0;
 
 function getWsUrl() {
   const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -19,6 +20,12 @@ function getWsUrl() {
 function setStatus(text, cls) {
   statusEl.textContent = text;
   statusEl.className = 'status ' + (cls || '');
+}
+
+function updateTaskBadge() {
+  if (activeTasks > 0) {
+    setStatus(`Connected — ${activeTasks} background task${activeTasks > 1 ? 's' : ''} running`, 'thinking');
+  }
 }
 
 function connect() {
@@ -37,10 +44,27 @@ function connect() {
 
   ws.onmessage = async (event) => {
     const msg = JSON.parse(event.data);
+
     if (msg.type === 'response_audio') {
+      if (msg.has_background_task) {
+        activeTasks++;
+        updateTaskBadge();
+      }
       setStatus('Hermes is speaking…', 'speaking');
       await playAudio(msg.data);
-      setStatus('Hold to talk', 'connected');
+      updateTaskBadge();
+    } else if (msg.type === 'proactive') {
+      // Background task completed — auto-play if user isn't recording
+      if (!isRecording) {
+        setStatus('Hermes has an update…', 'speaking');
+        if (msg.audio_data) {
+          await playAudio(msg.audio_data);
+        }
+        updateTaskBadge();
+      } else {
+        // Queue visually? For now just log
+        console.log('Proactive message queued (user recording):', msg.message);
+      }
     } else if (msg.type === 'error') {
       setStatus('Error: ' + msg.message);
     }
@@ -73,7 +97,7 @@ async function startRecording() {
     mediaRecorder.ondataavailable = (e) => {
       if (e.data.size > 0) audioChunks.push(e.data);
     };
-    mediaRecorder.start(100); // collect 100ms chunks
+    mediaRecorder.start(100);
   } catch (err) {
     console.error('Mic error:', err);
     setStatus('Microphone access denied');

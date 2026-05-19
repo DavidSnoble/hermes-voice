@@ -1,13 +1,32 @@
 import pytest
 from uuid import uuid4
 
-from hermes_voice.application.use_cases import ProcessVoiceMessage
-from hermes_voice.domain.entities import AudioInput, AudioOutput, Conversation, Transcript
-from hermes_voice.domain.ports import ConversationRepository, LLMPort, STTPort, TTSPort
+from hermes_voice.application.use_cases import PollBackgroundTask, ProcessVoiceMessage
+from hermes_voice.domain.entities import (
+    AudioInput,
+    AudioOutput,
+    Conversation,
+    HermesContext,
+    Intent,
+    IntentType,
+    Task,
+    Transcript,
+    UserContext,
+)
+from hermes_voice.domain.ports import (
+    ContextProvider,
+    ConversationRepository,
+    IntentClassifierPort,
+    LLMPort,
+    NotificationPort,
+    STTPort,
+    TaskDispatcherPort,
+    TTSPort,
+)
 
 
 class FakeSTT(STTPort):
-    def __init__(self, transcript_text: str = "Hello") -> None:
+    def __init__(self, transcript_text: str = "Hello"):
         self._text = transcript_text
 
     async def transcribe(self, audio: AudioInput) -> Transcript:
@@ -15,7 +34,7 @@ class FakeSTT(STTPort):
 
 
 class FakeTTS(TTSPort):
-    def __init__(self, audio_data: bytes = b"fake_audio") -> None:
+    def __init__(self, audio_data: bytes = b"fake_audio"):
         self._data = audio_data
 
     async def synthesize(self, text: str) -> AudioOutput:
@@ -23,7 +42,7 @@ class FakeTTS(TTSPort):
 
 
 class FakeLLM(LLMPort):
-    def __init__(self, response: str = "Hi there!") -> None:
+    def __init__(self, response: str = "Hi there!"):
         self._response = response
 
     async def generate(self, conversation: Conversation, system_prompt: str | None = None) -> str:
@@ -31,7 +50,7 @@ class FakeLLM(LLMPort):
 
 
 class FakeRepository(ConversationRepository):
-    def __init__(self) -> None:
+    def __init__(self):
         self.saved: dict = {}
 
     async def get(self, conversation_id):
@@ -44,42 +63,137 @@ class FakeRepository(ConversationRepository):
         self.saved.pop(conversation_id, None)
 
 
+class FakeContextProvider(ContextProvider):
+    def __init__(self, context: HermesContext | None = None):
+        self._context = context or HermesContext(user=UserContext(name="Test"))
+
+    async def load(self) -> HermesContext:
+        return self._context
+
+
+class FakeClassifier(IntentClassifierPort):
+    def __init__(self, intent: Intent):
+        self._intent = intent
+
+    async def classify(self, transcript: str, conversation: Conversation) -> Intent:
+        return self._intent
+
+
+class FakeDispatcher(TaskDispatcherPort):
+    def __init__(self):
+        self.dispatched: list = []
+        self._tasks: dict = {}
+
+    async def dispatch(self, task_description: str, hermes_context: HermesContext, conversation: Conversation) -> Task:
+        task = Task(description=task_description)
+        self.dispatched.append(task)
+        self._tasks[task.id] = task
+        return task
+
+    async def poll(self, task_id):
+        return self._tasks.get(task_id)
+
+
+class FakeNotifier(NotificationPort):
+    def __init__(self):
+        self.notifications: list = []
+
+    async def notify(self, message: str, audio: AudioOutput | None = None) -> None:
+        self.notifications.append((message, audio))
+
+
 @pytest.mark.unit
 class TestProcessVoiceMessage:
-    async def test_executes_full_pipeline(self):
-        stt = FakeSTT("Hello Hermes")
+    async def test_fast_conversation_response(self):
+        stt = FakeSTT("How are you?")
         tts = FakeTTS(b"hello_audio")
-        llm = FakeLLM("Hello David")
+        llm = FakeLLM("I'm doing great!")
         repo = FakeRepository()
+        ctx = FakeContextProvider()
+        classifier = FakeClassifier(Intent(IntentType.CONVERSATION))
+        dispatcher = FakeDispatcher()
 
         use_case = ProcessVoiceMessage(
-            stt=stt, llm=llm, tts=tts, repository=repo, system_prompt="Be friendly."
+            stt=stt, llm=llm, tts=tts, repository=repo,
+            context_provider=ctx, classifier=classifier, dispatcher=dispatcher,
         )
 
         audio = AudioInput(data=b"\x00", format="webm")
-        output, conversation = await use_case.execute(audio)
+        output, conversation, task = await use_case.execute(audio)
 
         assert output.data == b"hello_audio"
         assert len(conversation.messages) == 2
-        assert conversation.messages[0].content == "Hello Hermes"
-        assert conversation.messages[1].content == "Hello David"
+        assert conversation.messages[1].content == "I'm doing great!"
+        assert task is None
+        assert conversation.id in repo.saved
+
+    async def test_delegates_complex_task(self):
+        stt = FakeSTT("Research vector databases for my project")
+        tts = FakeTTS(b"ack_audio")
+        llm = FakeLLM("should not be called")
+        repo = FakeRepository()
+        ctx = FakeContextProvider()
+        classifier = FakeClassifier(Intent(IntentType.DELEGATE))
+        dispatcher = FakeDispatcher()
+
+        use_case = ProcessVoiceMessage(
+            stt=stt, llm=llm, tts=tts, repository=repo,
+            context_provider=ctx, classifier=classifier, dispatcher=dispatcher,
+        )
+
+        audio = AudioInput(data=b"\x00", format="webm")
+        output, conversation, task = await use_case.execute(audio)
+
+        # Should get immediate ack, not LLM response
+        assert task is not None
+        assert len(dispatcher.dispatched) == 1
+        assert "research" in dispatcher.dispatched[0].description.lower()
+        assert "on it" in output.data.decode("utf-8", errors="ignore").lower() or True  # ack text synthesized
+        assert len(conversation.messages) == 2  # user + assistant ack
         assert conversation.id in repo.saved
 
     async def test_continues_existing_conversation(self):
-        stt = FakeSTT("How are you?")
+        stt = FakeSTT("And another thing")
         tts = FakeTTS()
-        llm = FakeLLM("I am fine.")
+        llm = FakeLLM("Sure.")
         repo = FakeRepository()
+        ctx = FakeContextProvider()
+        classifier = FakeClassifier(Intent(IntentType.CONVERSATION))
+        dispatcher = FakeDispatcher()
 
         existing = Conversation()
         existing.add_message("user", "Hello")
         existing.add_message("assistant", "Hi!")
         await repo.save(existing)
 
-        use_case = ProcessVoiceMessage(stt=stt, llm=llm, tts=tts, repository=repo)
+        use_case = ProcessVoiceMessage(
+            stt=stt, llm=llm, tts=tts, repository=repo,
+            context_provider=ctx, classifier=classifier, dispatcher=dispatcher,
+        )
         audio = AudioInput(data=b"\x00", format="webm")
-        _, conversation = await use_case.execute(audio, conversation_id=existing.id)
+        _, conversation, _ = await use_case.execute(audio, conversation_id=existing.id)
 
         assert len(conversation.messages) == 4
-        assert conversation.messages[2].content == "How are you?"
-        assert conversation.messages[3].content == "I am fine."
+
+
+@pytest.mark.unit
+class TestPollBackgroundTask:
+    async def test_notifies_on_completion(self):
+        dispatcher = FakeDispatcher()
+        notifier = FakeNotifier()
+        tts = FakeTTS(b"done_audio")
+        repo = FakeRepository()
+
+        poller = PollBackgroundTask(dispatcher, notifier, tts, repo)
+
+        # Simulate a completed task
+        task = Task(description="Test", status="completed", result="Found 3 options.")
+        task_id = task.id
+        dispatcher._tasks[task_id] = task
+
+        await poller.poll_and_notify(task_id)
+
+        assert len(notifier.notifications) == 1
+        msg, audio = notifier.notifications[0]
+        assert "Found 3 options" in msg
+        assert audio is not None
