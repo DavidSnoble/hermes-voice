@@ -1,23 +1,22 @@
 from uuid import UUID, uuid4
 
 from hermes_voice.domain.entities import (
+    AgentContext,
     AudioInput,
     AudioOutput,
     Conversation,
-    HermesContext,
     IntentType,
-    Message,
     Task,
     Transcript,
 )
 from hermes_voice.domain.ports import (
     ContextProvider,
     ConversationRepository,
+    HermesGatewayPort,
     IntentClassifierPort,
     LLMPort,
     NotificationPort,
     STTPort,
-    TaskDispatcherPort,
     TTSPort,
 )
 
@@ -27,6 +26,9 @@ class ProcessVoiceMessage:
     Core use case: turn user audio into assistant audio.
 
     Orchestrates STT → Intent Classification → Route → Response.
+
+    - CONVERSATION / QUICK_TOOL: fast inline LLM response
+    - DELEGATE: immediate voice ack + delegate to Hermes gateway
     """
 
     def __init__(
@@ -37,7 +39,7 @@ class ProcessVoiceMessage:
         repository: ConversationRepository,
         context_provider: ContextProvider,
         classifier: IntentClassifierPort,
-        dispatcher: TaskDispatcherPort,
+        gateway: HermesGatewayPort,
         notifier: NotificationPort | None = None,
     ) -> None:
         self._stt = stt
@@ -46,26 +48,18 @@ class ProcessVoiceMessage:
         self._repository = repository
         self._context_provider = context_provider
         self._classifier = classifier
-        self._dispatcher = dispatcher
+        self._gateway = gateway
         self._notifier = notifier
 
     async def execute(
         self, audio: AudioInput, conversation_id: UUID | None = None
     ) -> tuple[AudioOutput, Conversation, Task | None]:
-        """
-        1. Transcribe audio to text.
-        2. Load or create conversation + Hermes context.
-        3. Classify intent.
-        4. Route to fast response or background delegation.
-        5. Synthesize response audio.
-        6. Persist conversation.
-        """
         # 1. STT
         transcript: Transcript = await self._stt.transcribe(audio)
 
         # 2. Load context + conversation
-        hermes_context: HermesContext = await self._context_provider.load()
-        system_prompt = hermes_context.build_system_prompt(voice_mode=True)
+        agent_context: AgentContext = await self._context_provider.load()
+        system_prompt = agent_context.build_system_prompt()
 
         conversation: Conversation
         if conversation_id:
@@ -82,19 +76,17 @@ class ProcessVoiceMessage:
         # 4. Route
         task: Task | None = None
         if intent.intent_type == IntentType.DELEGATE:
-            # Immediate ack + background dispatch
             ack_text = self._pick_acknowledgement(transcript.text)
             conversation.add_message("assistant", ack_text)
             await self._repository.save(conversation)
 
-            task = await self._dispatcher.dispatch(
+            # Delegate to Hermes gateway (the REAL brain with ALL tools)
+            task = await self._gateway.delegate(
                 task_description=transcript.text,
-                hermes_context=hermes_context,
-                conversation=conversation,
+                conversation_history=conversation.as_llm_context(),
             )
             response_text = ack_text
         else:
-            # Fast inline response
             response_text = await self._llm.generate(
                 conversation, system_prompt=system_prompt
             )
@@ -107,39 +99,37 @@ class ProcessVoiceMessage:
         return audio_output, conversation, task
 
     def _pick_acknowledgement(self, user_text: str) -> str:
-        """Pick an immediate voice ack for delegated tasks."""
         lower = user_text.lower()
         if any(w in lower for w in ("research", "look up", "find out", "compare")):
-            return "I'll research that for you. Keep talking, I'll let you know when I'm done."
+            return "I'm on it. Keep talking, I'll let you know when I'm done."
         if any(w in lower for w in ("refactor", "code", "rewrite", "fix", "debug")):
-            return "I'm on the code task. Chat with me while I work."
+            return "I'm delegating that to Hermes. Chat with me while it works."
         if any(w in lower for w in ("write", "draft", "generate", "create")):
             return "I'll start writing that up. What else is on your mind?"
-        return "I'm on it. Keep talking to me while I work."
+        return "I'm on it. Keep talking to me while Hermes works on that."
 
 
 class PollBackgroundTask:
     """
-    Polls background tasks and notifies the user when complete.
+    Polls Hermes gateway tasks and proactively notifies the user when complete.
     """
 
     def __init__(
         self,
-        dispatcher: TaskDispatcherPort,
+        gateway: HermesGatewayPort,
         notifier: NotificationPort,
         tts: TTSPort,
         repository: ConversationRepository,
     ) -> None:
-        self._dispatcher = dispatcher
+        self._gateway = gateway
         self._notifier = notifier
         self._tts = tts
         self._repository = repository
 
-    async def poll_and_notify(self, task_id: UUID) -> None:
-        task = await self._dispatcher.poll(task_id)
+    async def poll_and_notify(self, task_id: str) -> None:
+        task = await self._gateway.poll(task_id)
         if task and task.status == "completed" and task.result:
-            # Synthesize completion message
-            completion_msg = f"By the way, I finished: {task.result[:200]}"
+            completion_msg = f"By the way, Hermes finished: {task.result[:200]}"
             if len(task.result) > 200:
                 completion_msg += "... Want me to read the full details?"
 
@@ -150,5 +140,7 @@ class PollBackgroundTask:
             if task.conversation_id:
                 conv = await self._repository.get(task.conversation_id)
                 if conv:
-                    conv.add_message("assistant", f"[Background task completed] {task.result}")
+                    conv.add_message(
+                        "assistant", f"[Hermes completed] {task.result}"
+                    )
                     await self._repository.save(conv)

@@ -2,10 +2,10 @@ from abc import ABC, abstractmethod
 from uuid import UUID
 
 from hermes_voice.domain.entities import (
+    AgentContext,
     AudioInput,
     AudioOutput,
     Conversation,
-    HermesContext,
     Intent,
     Task,
     Transcript,
@@ -17,7 +17,6 @@ class STTPort(ABC):
 
     @abstractmethod
     async def transcribe(self, audio: AudioInput) -> Transcript:
-        """Convert audio to transcript."""
         ...
 
 
@@ -26,7 +25,6 @@ class TTSPort(ABC):
 
     @abstractmethod
     async def synthesize(self, text: str) -> AudioOutput:
-        """Convert text to spoken audio."""
         ...
 
 
@@ -35,7 +33,6 @@ class LLMPort(ABC):
 
     @abstractmethod
     async def generate(self, conversation: Conversation, system_prompt: str | None = None) -> str:
-        """Generate assistant response text."""
         ...
 
 
@@ -56,46 +53,48 @@ class ConversationRepository(ABC):
 
 
 class ContextProvider(ABC):
-    """Port: Loads the full Hermes startup context (persona + user + env)."""
+    """Port: Loads lightweight Hermes persona + user context."""
 
     @abstractmethod
-    async def load(self) -> HermesContext:
-        """Load all context sources and return a unified HermesContext."""
+    async def load(self) -> AgentContext:
         ...
 
 
 class IntentClassifierPort(ABC):
-    """Port: Classifies a user message into an Intent (conversation/quick_tool/delegate)."""
+    """Port: Classifies a user message into an Intent."""
 
     @abstractmethod
     async def classify(self, transcript: str, conversation: Conversation) -> Intent:
-        """Classify the user's intent."""
         ...
 
 
-class TaskDispatcherPort(ABC):
-    """Port: Spawns background sub-agents for delegated tasks."""
+class HermesGatewayPort(ABC):
+    """
+    Port: Delegates complex tasks to the full Hermes gateway via its API server.
+
+    The Hermes gateway (running on port 8642) has ALL tools, skills, memory,
+    and the full agent loop. The voice app only calls into it.
+    """
 
     @abstractmethod
-    async def dispatch(
-        self,
-        task_description: str,
-        hermes_context: HermesContext,
-        conversation: Conversation,
+    async def delegate(
+        self, task_description: str, conversation_history: list[dict[str, str]]
     ) -> Task:
-        """Dispatch a background task and return a Task handle."""
+        """
+        Start a background task on the Hermes gateway.
+        Returns immediately with a task handle containing the Hermes run_id.
+        """
         ...
 
     @abstractmethod
-    async def poll(self, task_id: UUID) -> Task | None:
-        """Check the status of a background task."""
+    async def poll(self, task_id: str) -> Task | None:
+        """Check the status of a Hermes background task."""
         ...
 
 
 class NotificationPort(ABC):
-    """Port: Pushes proactive notifications to the user (e.g., task completed)."""
+    """Port: Pushes proactive notifications to the user."""
 
     @abstractmethod
     async def notify(self, message: str, audio: AudioOutput | None = None) -> None:
-        """Send a notification. Audio is optional but preferred for voice UX."""
         ...

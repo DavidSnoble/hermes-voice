@@ -8,16 +8,16 @@ from hermes_voice.application.use_cases import PollBackgroundTask, ProcessVoiceM
 from hermes_voice.domain.ports import (
     ContextProvider,
     ConversationRepository,
+    HermesGatewayPort,
     IntentClassifierPort,
     LLMPort,
     STTPort,
-    TaskDispatcherPort,
     TTSPort,
 )
-from hermes_voice.infrastructure.async_task_dispatcher import AsyncSubAgentDispatcher
 from hermes_voice.infrastructure.cartesia_tts import CartesiaTTSAdapter
 from hermes_voice.infrastructure.deepgram_stt import DeepgramSTTAdapter
 from hermes_voice.infrastructure.hermes_context_provider import HermesContextProvider
+from hermes_voice.infrastructure.hermes_gateway_adapter import HermesGatewayAdapter
 from hermes_voice.infrastructure.llm_intent_classifier import LLMIntentClassifier
 from hermes_voice.infrastructure.memory_repo import InMemoryConversationRepository
 from hermes_voice.infrastructure.openrouter_llm import OpenRouterLLMAdapter
@@ -29,10 +29,11 @@ class Settings(BaseSettings):
     llm_api_key: str
     llm_base_url: str = "https://openrouter.ai/api/v1"
     llm_model: str = "openai/gpt-4o-mini"
+    hermes_api_key: str = ""
+    hermes_api_url: str = "http://127.0.0.1:8642"
     voice_port: int = 9120
     voice_host: str = "0.0.0.0"
     hermes_home: str = ""
-    system_prompt: str | None = None
 
     class Config:
         env_prefix = ""
@@ -78,8 +79,16 @@ def get_intent_classifier(settings: Settings = get_settings()) -> IntentClassifi
     )
 
 
-def get_task_dispatcher(settings: Settings = get_settings()) -> TaskDispatcherPort:
-    return AsyncSubAgentDispatcher(llm_client_factory=lambda: get_llm(settings))
+def get_hermes_gateway(settings: Settings = get_settings()) -> HermesGatewayPort:
+    if not settings.hermes_api_key:
+        raise ValueError(
+            "HERMES_API_KEY not configured. "
+            "Enable the Hermes API server with API_SERVER_ENABLED=true and API_SERVER_KEY=xxx"
+        )
+    return HermesGatewayAdapter(
+        api_key=settings.hermes_api_key,
+        base_url=settings.hermes_api_url,
+    )
 
 
 def get_process_voice_message(settings: Settings = get_settings()) -> ProcessVoiceMessage:
@@ -90,5 +99,5 @@ def get_process_voice_message(settings: Settings = get_settings()) -> ProcessVoi
         repository=get_repository(),
         context_provider=get_context_provider(),
         classifier=get_intent_classifier(),
-        dispatcher=get_task_dispatcher(),
+        gateway=get_hermes_gateway(),
     )

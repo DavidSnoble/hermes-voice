@@ -9,8 +9,8 @@ from fastapi import WebSocket, WebSocketDisconnect
 from hermes_voice.api.dependencies import (
     get_process_voice_message,
     get_repository,
-    get_task_dispatcher,
     get_tts,
+    get_hermes_gateway,
 )
 from hermes_voice.application.use_cases import PollBackgroundTask
 from hermes_voice.domain.entities import AudioInput
@@ -23,14 +23,13 @@ async def handle_voice_websocket(websocket: WebSocket) -> None:
     use_case = get_process_voice_message()
     repository = get_repository()
     tts = get_tts()
-    dispatcher = get_task_dispatcher()
+    gateway = get_hermes_gateway()
     notifier = WebSocketNotificationBus(websocket)
 
     conversation_id: UUID | None = None
-    active_tasks: set[UUID] = set()
-    poller = PollBackgroundTask(dispatcher, notifier, tts, repository)
+    active_tasks: set[str] = set()
+    poller = PollBackgroundTask(gateway, notifier, tts, repository)
 
-    # Start a background poller loop
     poll_cancel: asyncio.Task | None = None
 
     async def poll_loop() -> None:
@@ -38,8 +37,7 @@ async def handle_voice_websocket(websocket: WebSocket) -> None:
             await asyncio.sleep(5)
             for task_id in list(active_tasks):
                 await poller.poll_and_notify(task_id)
-                # Remove completed/failed tasks from tracking
-                task = await dispatcher.poll(task_id)
+                task = await gateway.poll(task_id)
                 if task and task.status in ("completed", "failed"):
                     active_tasks.discard(task_id)
 

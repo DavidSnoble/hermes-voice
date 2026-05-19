@@ -9,7 +9,7 @@ class AudioInput:
     """Raw audio captured from the user's microphone."""
 
     data: bytes
-    format: str  # e.g. "webm/opus", "wav", "mp3"
+    format: str
     sample_rate: int = 48000
     channels: int = 1
 
@@ -67,37 +67,33 @@ class Conversation:
 
 @dataclass
 class Persona:
-    """The agent's personality and voice."""
+    """The agent's personality. Loaded from Hermes SOUL.md."""
 
-    identity: str = "You are a helpful AI assistant."
-    voice_style: str = "concise"  # concise, friendly, technical
-    quirks: list[str] = field(default_factory=list)
-    display_personality: str = "default"  # kawaii, pirate, etc.
+    identity: str = "You are Hermes, a helpful AI assistant."
+    voice_style: str = "concise"
+    display_personality: str = "default"
 
     def as_system_prompt_fragment(self) -> str:
         lines = [self.identity]
         if self.voice_style == "concise":
-            lines.append("Keep responses short and to the point. Use brief sentences suitable for text-to-speech.")
-        elif self.voice_style == "friendly":
-            lines.append("Be warm and conversational. Speak like a helpful friend.")
-        if self.quirks:
-            lines.append("Personality notes: " + "; ".join(self.quirks))
+            lines.append(
+                "Keep responses VERY short (1-3 sentences). Speak in a natural, "
+                "conversational way suitable for text-to-speech while the user drives."
+            )
         return "\n".join(lines)
 
 
 @dataclass
 class UserContext:
-    """Everything known about the user — loaded from Hermes USER.md + MEMORY.md."""
+    """Everything known about the user — loaded from Hermes memories/USER.md."""
 
     name: str = "User"
     location: str = ""
     timezone: str = "UTC"
     job: str = ""
-    salary: float = 0.0
     preferences: dict[str, str] = field(default_factory=dict)
     facts: list[str] = field(default_factory=list)
     adhd_scaffolding: bool = False
-    tools_available: list[str] = field(default_factory=list)
 
     def as_system_prompt_fragment(self) -> str:
         lines = [f"You are assisting {self.name}."]
@@ -111,54 +107,35 @@ class UserContext:
                 lines.append(f"  • {fact}")
         if self.adhd_scaffolding:
             lines.append(
-                "This user has ADHD and benefits from external scaffolding, "
-                "direct answers, and proactive check-ins."
+                "This user has ADHD and benefits from direct answers, external scaffolding, "
+                "and proactive check-ins. Be concise and action-oriented."
             )
-        if self.preferences:
-            lines.append("Preferences:")
-            for k, v in self.preferences.items():
-                lines.append(f"  • {k}: {v}")
         return "\n".join(lines)
 
 
 @dataclass
-class HermesContext:
-    """Complete Hermes startup context — persona + user + env."""
+class AgentContext:
+    """Lightweight context for the voice agent — personality + user, NOT all tools."""
 
     persona: Persona = field(default_factory=Persona)
     user: UserContext = field(default_factory=UserContext)
-    environment_notes: str = ""
-    config: dict = field(default_factory=dict)
 
-    def build_system_prompt(self, voice_mode: bool = True) -> str:
-        """Build the full system prompt that makes this agent feel like Hermes."""
-        parts: list[str] = []
-
-        parts.append(self.persona.as_system_prompt_fragment())
-        parts.append("")
-        parts.append(self.user.as_system_prompt_fragment())
-
-        if self.environment_notes:
-            parts.append("")
-            parts.append("Environment context:")
-            parts.append(self.environment_notes)
-
-        if voice_mode:
-            parts.append("")
-            parts.append(
-                "Voice mode instructions: "
-                "You are responding via text-to-speech while the user is driving. "
-                "Keep responses SHORT (1-3 sentences). Confirm actions immediately. "
-                "For complex tasks, say 'I'm on it' and delegate to background workers."
-            )
-
-        return "\n".join(parts)
+    def build_system_prompt(self) -> str:
+        return (
+            self.persona.as_system_prompt_fragment()
+            + "\n\n"
+            + self.user.as_system_prompt_fragment()
+            + "\n\n"
+            + "You have access to a small set of fast tools: web_search, file_read. "
+            "For anything complex (coding, multi-step research, system changes), "
+            "say you're delegating to Hermes and a background task will handle it."
+        )
 
 
 class IntentType(Enum):
-    CONVERSATION = "conversation"   # chitchat, simple Q&A, no tools
-    QUICK_TOOL = "quick_tool"       # single tool call, <5s
-    DELEGATE = "delegate"           # complex multi-step task
+    CONVERSATION = "conversation"
+    QUICK_TOOL = "quick_tool"
+    DELEGATE = "delegate"
 
 
 @dataclass
@@ -170,9 +147,9 @@ class Intent:
 
 @dataclass
 class Task:
-    """A background task delegated to a sub-agent."""
+    """A background task delegated to the Hermes gateway."""
 
-    id: UUID = field(default_factory=uuid4)
+    id: str = ""  # Hermes run_id
     description: str = ""
     status: Literal["pending", "running", "completed", "failed"] = "pending"
     result: str | None = None

@@ -3,10 +3,10 @@ from uuid import uuid4
 
 from hermes_voice.application.use_cases import PollBackgroundTask, ProcessVoiceMessage
 from hermes_voice.domain.entities import (
+    AgentContext,
     AudioInput,
     AudioOutput,
     Conversation,
-    HermesContext,
     Intent,
     IntentType,
     Task,
@@ -16,11 +16,11 @@ from hermes_voice.domain.entities import (
 from hermes_voice.domain.ports import (
     ContextProvider,
     ConversationRepository,
+    HermesGatewayPort,
     IntentClassifierPort,
     LLMPort,
     NotificationPort,
     STTPort,
-    TaskDispatcherPort,
     TTSPort,
 )
 
@@ -64,10 +64,10 @@ class FakeRepository(ConversationRepository):
 
 
 class FakeContextProvider(ContextProvider):
-    def __init__(self, context: HermesContext | None = None):
-        self._context = context or HermesContext(user=UserContext(name="Test"))
+    def __init__(self, context: AgentContext | None = None):
+        self._context = context or AgentContext(user=UserContext(name="Test"))
 
-    async def load(self) -> HermesContext:
+    async def load(self) -> AgentContext:
         return self._context
 
 
@@ -79,18 +79,18 @@ class FakeClassifier(IntentClassifierPort):
         return self._intent
 
 
-class FakeDispatcher(TaskDispatcherPort):
+class FakeGateway(HermesGatewayPort):
     def __init__(self):
         self.dispatched: list = []
         self._tasks: dict = {}
 
-    async def dispatch(self, task_description: str, hermes_context: HermesContext, conversation: Conversation) -> Task:
-        task = Task(description=task_description)
+    async def delegate(self, task_description: str, conversation_history: list[dict[str, str]]) -> Task:
+        task = Task(id="run_test_123", description=task_description)
         self.dispatched.append(task)
         self._tasks[task.id] = task
         return task
 
-    async def poll(self, task_id):
+    async def poll(self, task_id: str):
         return self._tasks.get(task_id)
 
 
@@ -111,11 +111,11 @@ class TestProcessVoiceMessage:
         repo = FakeRepository()
         ctx = FakeContextProvider()
         classifier = FakeClassifier(Intent(IntentType.CONVERSATION))
-        dispatcher = FakeDispatcher()
+        gateway = FakeGateway()
 
         use_case = ProcessVoiceMessage(
             stt=stt, llm=llm, tts=tts, repository=repo,
-            context_provider=ctx, classifier=classifier, dispatcher=dispatcher,
+            context_provider=ctx, classifier=classifier, gateway=gateway,
         )
 
         audio = AudioInput(data=b"\x00", format="webm")
@@ -127,18 +127,18 @@ class TestProcessVoiceMessage:
         assert task is None
         assert conversation.id in repo.saved
 
-    async def test_delegates_complex_task(self):
-        stt = FakeSTT("Research vector databases for my project")
+    async def test_delegates_complex_task_to_hermes(self):
+        stt = FakeSTT("Refactor the auth module to use JWT")
         tts = FakeTTS(b"ack_audio")
         llm = FakeLLM("should not be called")
         repo = FakeRepository()
         ctx = FakeContextProvider()
         classifier = FakeClassifier(Intent(IntentType.DELEGATE))
-        dispatcher = FakeDispatcher()
+        gateway = FakeGateway()
 
         use_case = ProcessVoiceMessage(
             stt=stt, llm=llm, tts=tts, repository=repo,
-            context_provider=ctx, classifier=classifier, dispatcher=dispatcher,
+            context_provider=ctx, classifier=classifier, gateway=gateway,
         )
 
         audio = AudioInput(data=b"\x00", format="webm")
@@ -146,9 +146,9 @@ class TestProcessVoiceMessage:
 
         # Should get immediate ack, not LLM response
         assert task is not None
-        assert len(dispatcher.dispatched) == 1
-        assert "research" in dispatcher.dispatched[0].description.lower()
-        assert "on it" in output.data.decode("utf-8", errors="ignore").lower() or True  # ack text synthesized
+        assert task.id == "run_test_123"
+        assert len(gateway.dispatched) == 1
+        assert "refactor" in gateway.dispatched[0].description.lower()
         assert len(conversation.messages) == 2  # user + assistant ack
         assert conversation.id in repo.saved
 
@@ -159,7 +159,7 @@ class TestProcessVoiceMessage:
         repo = FakeRepository()
         ctx = FakeContextProvider()
         classifier = FakeClassifier(Intent(IntentType.CONVERSATION))
-        dispatcher = FakeDispatcher()
+        gateway = FakeGateway()
 
         existing = Conversation()
         existing.add_message("user", "Hello")
@@ -168,7 +168,7 @@ class TestProcessVoiceMessage:
 
         use_case = ProcessVoiceMessage(
             stt=stt, llm=llm, tts=tts, repository=repo,
-            context_provider=ctx, classifier=classifier, dispatcher=dispatcher,
+            context_provider=ctx, classifier=classifier, gateway=gateway,
         )
         audio = AudioInput(data=b"\x00", format="webm")
         _, conversation, _ = await use_case.execute(audio, conversation_id=existing.id)
@@ -179,19 +179,18 @@ class TestProcessVoiceMessage:
 @pytest.mark.unit
 class TestPollBackgroundTask:
     async def test_notifies_on_completion(self):
-        dispatcher = FakeDispatcher()
+        gateway = FakeGateway()
         notifier = FakeNotifier()
         tts = FakeTTS(b"done_audio")
         repo = FakeRepository()
 
-        poller = PollBackgroundTask(dispatcher, notifier, tts, repo)
+        poller = PollBackgroundTask(gateway, notifier, tts, repo)
 
         # Simulate a completed task
-        task = Task(description="Test", status="completed", result="Found 3 options.")
-        task_id = task.id
-        dispatcher._tasks[task_id] = task
+        task = Task(id="run_abc", description="Test", status="completed", result="Found 3 options.")
+        gateway._tasks["run_abc"] = task
 
-        await poller.poll_and_notify(task_id)
+        await poller.poll_and_notify("run_abc")
 
         assert len(notifier.notifications) == 1
         msg, audio = notifier.notifications[0]

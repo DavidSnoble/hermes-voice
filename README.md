@@ -2,38 +2,23 @@
 
 Push-to-talk voice interface for Hermes AI, built with **hexagonal architecture**.
 
-It loads the **same context** Hermes loads at startup — your persona (`SOUL.md`),
-user profile (`memories/USER.md`), environment notes (`memories/MEMORY.md`), and
-configuration — so it feels like talking to the same assistant.
+It loads your **personality and user context** from Hermes (`SOUL.md`, `USER.md`) so it
+sounds like the same assistant — but it stays **lightweight**. Complex tasks are
+delegated to the full Hermes gateway via its built-in API server.
 
 ```
-┌─────────────┐     ┌──────────────┐     ┌─────────────┐
-│   Browser   │────▶│  Voice Gateway  │────▶│  Deepgram   │
-│ (Mic+Audio) │◄────│  (WebSocket)   │◄────│   (STT)     │
-└─────────────┘     │               │     └─────────────┘
-                    │               │
-                    │  ┌────────┐ │     ┌─────────────┐
-                    │  │Application│ │────▶│  OpenRouter  │
-                    │  │ Use Cases│ │◄────│   (LLM)     │
-                    │  └────────┘ │     └─────────────┘
-                    │      ▲       │
-                    │  ┌───┴───┐   │     ┌─────────────┐
-                    │  │ Domain │   │────▶│  Cartesia   │
-                    │  │ Ports  │   │◄────│   (TTS)     │
-                    │  └───────┘   │     └─────────────┘
-                    └──────────────┘
-                           │
-              ┌─────────────────────────────────────────┐
-              │         Hermes Context Provider              │
-              │  Loads SOUL.md + USER.md + MEMORY.md + config │
-              │         (same startup context as Hermes)       │
-              └─────────────────────────────────────────┘
-                           │
-              ┌─────────────────────────────────────────┐
-              │         Background Sub-Agent Workers             │
-              │   Inherit full HermesContext + conversation     │
-              │   Run complex tasks while voice loop stays chatty │
-              └─────────────────────────────────────────┘
+Voice App (lightweight)                    Hermes Gateway (full power)
+┌───────────────────────┐                 ┌───────────────────────┐
+│  Browser (push-to-talk)  │                 │  Hermes Gateway          │
+│  → Deepgram STT          │                 │  → All tools & skills    │
+│  → Cartesia TTS          │                 │  → Full agent loop       │
+│  → 2-3 fast tools        │                 │  → Memory & context      │
+│  → Intent classifier     │                 │  → Personality           │
+└─────────────┼─────────────┘                 └───────────────────────┘
+           │                                          ▲
+           │    POST /v1/runs (delegate complex task)
+           └────────────────────────────────────────┴─────────────
+              GET /v1/runs/{id} (poll for completion)
 ```
 
 ## Architecture
@@ -42,19 +27,42 @@ configuration — so it feels like talking to the same assistant.
 |-------|------|--------------|---------------|
 | **Domain** | `src/hermes_voice/domain/` | Entities + Ports | None |
 | **Application** | `src/hermes_voice/application/` | Use Cases | Domain only |
-| **Infrastructure** | `src/hermes_voice/infrastructure/` | Adapters | HTTP clients, APIs, YAML |
+| **Infrastructure** | `src/hermes_voice/infrastructure/` | Adapters | HTTP clients, APIs |
 | **API** | `src/hermes_voice/api/` | FastAPI + WebSocket + DI | FastAPI, static files |
 
-### Key Features
+### Key Design Decisions
 
-- **Intent Classification**: Every message is classified (`conversation` / `quick_tool` / `delegate`)
-- **Fast Response**: Simple messages get inline LLM responses (<2s)
-- **Background Delegation**: Complex tasks spawn async sub-agents. You get an immediate
-  *"I'm on it"* ack and can keep talking.
-- **Proactive Notifications**: When a background task finishes, the server pushes audio
-  to your browser automatically.
-- **Shared Hermes Context**: Loads `~/.hermes/SOUL.md`, `~/.hermes/memories/*.md`, and
-  `~/.hermes/config.yaml` so the voice agent has the same personality and knowledge.
+- **Lightweight voice agent**: Only loads persona (`SOUL.md`) + user profile (`USER.md`).
+  Does NOT load the full tool registry into its system prompt.
+- **Intent classification**: Every message is classified (`conversation` / `quick_tool` / `delegate`)
+- **Fast path**: Simple messages get inline LLM responses (<2s)
+- **Delegation path**: Complex tasks are sent to the Hermes gateway's `/v1/runs` API.
+  The full Hermes agent (with ALL tools, skills, memory) handles it.
+- **Proactive audio**: When a Hermes task finishes, the server pushes audio to your
+  browser automatically.
+
+## Prerequisites: Enable Hermes API Server
+
+The voice app delegates complex tasks to your existing Hermes gateway. You must
+enable the built-in API server:
+
+1. Set environment variables in your Hermes process:
+   ```bash
+   export API_SERVER_ENABLED=true
+   export API_SERVER_KEY=your_secret_key_here
+   export API_SERVER_PORT=8642
+   export API_SERVER_HOST=127.0.0.1
+   ```
+
+2. Restart the Hermes gateway:
+   ```bash
+   systemctl restart hermes-dashboard  # or however you run Hermes
+   ```
+
+3. Verify it's running:
+   ```bash
+   curl http://127.0.0.1:8642/health
+   ```
 
 ## Quick Start
 
@@ -62,7 +70,7 @@ configuration — so it feels like talking to the same assistant.
 
 - [Deepgram](https://console.deepgram.com/signup) — Speech-to-Text
 - [Cartesia](https://play.cartesia.ai/) — Text-to-Speech
-- [OpenRouter](https://openrouter.ai/keys) — LLM (or use your own OpenAI key)
+- [OpenRouter](https://openrouter.ai/keys) — LLM (for intent classifier + fast responses)
 
 ### 2. Install
 
@@ -79,7 +87,7 @@ cp .env.example .env
 # Edit .env with your keys
 ```
 
-Optional: set `HERMES_HOME=/path/to/.hermes` to load your Hermes context.
+Make sure `HERMES_API_KEY` matches the `API_SERVER_KEY` you set for Hermes.
 
 ### 4. Run
 
@@ -102,7 +110,8 @@ pytest -m integration   # slow, hits live APIs (requires keys)
 ./scripts/deploy.sh
 ```
 
-This installs the systemd service, requests an SSL cert for `voice.dsnoble.com`, and reloads nginx.
+This installs the systemd service, requests an SSL cert for `voice.dsnoble.com`,
+and reloads nginx.
 
 ## License
 

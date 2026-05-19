@@ -1,9 +1,9 @@
 import pytest
 from hermes_voice.domain.entities import (
+    AgentContext,
     AudioInput,
     AudioOutput,
     Conversation,
-    HermesContext,
     Intent,
     IntentType,
     Message,
@@ -55,14 +55,13 @@ class TestTranscript:
 class TestPersona:
     def test_default_persona(self):
         p = Persona()
-        assert "helpful" in p.identity.lower()
+        assert "Hermes" in p.identity
         assert p.voice_style == "concise"
 
     def test_persona_prompt_fragment(self):
-        p = Persona(identity="You are Hermes.", quirks=["direct", "honest"])
+        p = Persona(identity="You are Hermes.")
         fragment = p.as_system_prompt_fragment()
         assert "Hermes" in fragment
-        assert "direct" in fragment
         assert "concise" in fragment
 
 
@@ -87,23 +86,16 @@ class TestUserContext:
         assert "scaffolding" in fragment
 
 
-class TestHermesContext:
+class TestAgentContext:
     def test_build_system_prompt(self):
-        ctx = HermesContext(
+        ctx = AgentContext(
             persona=Persona(identity="You are Hermes."),
             user=UserContext(name="David"),
-            environment_notes="VPS: 4GB RAM",
         )
-        prompt = ctx.build_system_prompt(voice_mode=True)
+        prompt = ctx.build_system_prompt()
         assert "Hermes" in prompt
         assert "David" in prompt
-        assert "VPS" in prompt
-        assert "Voice mode" in prompt
-
-    def test_build_system_prompt_no_voice(self):
-        ctx = HermesContext(persona=Persona(), user=UserContext())
-        prompt = ctx.build_system_prompt(voice_mode=False)
-        assert "Voice mode" not in prompt
+        assert "small set of fast tools" in prompt
 
 
 class TestIntent:
