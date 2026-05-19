@@ -2,27 +2,37 @@
 set -euo pipefail
 
 APP_DIR="/opt/hermes-voice"
+REPO_URL="https://github.com/DavidSnoble/hermes-voice.git"
 SERVICE_NAME="hermes-voice"
 PORT=9120
 DOMAIN="voice.dsnoble.com"
 
 echo "==> Deploying Hermes Voice..."
 
-# 1. Sync code
-mkdir -p "$APP_DIR"
-rsync -av --exclude='.git' --exclude='.venv' --exclude='__pycache__' \
-    "$(dirname "$0")/../" "$APP_DIR/"
+# 1. Clone or update code
+if [[ -d "$APP_DIR/.git" ]]; then
+    cd "$APP_DIR"
+    git pull origin main
+else
+    rm -rf "$APP_DIR"
+    git clone "$REPO_URL" "$APP_DIR"
+    cd "$APP_DIR"
+fi
 
 # 2. Python env
 cd "$APP_DIR"
-python3 -m venv .venv
+if [[ ! -d ".venv" ]]; then
+    python3 -m venv .venv
+fi
 source .venv/bin/activate
 pip install -q -U pip
 pip install -q -e ".[dev]"
 
 # 3. Environment file must exist
 if [[ ! -f "$APP_DIR/.env" ]]; then
-    echo "ERROR: $APP_DIR/.env missing. Copy .env.example and fill in keys."
+    echo "ERROR: $APP_DIR/.env missing. Copy .env.example and fill in keys:"
+    echo "  DEEPGRAM_API_KEY=..."
+    echo "  CARTESIA_API_KEY=..."
     exit 1
 fi
 
@@ -30,7 +40,8 @@ fi
 cat > /etc/systemd/system/${SERVICE_NAME}.service <<EOF
 [Unit]
 Description=Hermes Voice
-After=network.target
+After=network.target hermes-gateway.service
+Wants=hermes-gateway.service
 
 [Service]
 Type=simple
@@ -86,9 +97,10 @@ ln -sf /etc/nginx/sites-available/${SERVICE_NAME} /etc/nginx/sites-enabled/
 if [[ ! -d "/etc/letsencrypt/live/${DOMAIN}" ]]; then
     certbot --nginx -d "$DOMAIN" --non-interactive --agree-tos --email snoble1353@gmail.com
 else
-    certbot renew --quiet
+    certbot renew --quiet || true
 fi
 
 nginx -t && systemctl reload nginx
 
 echo "==> Hermes Voice deployed to https://${DOMAIN}"
+echo "==> Status: systemctl status ${SERVICE_NAME}"
