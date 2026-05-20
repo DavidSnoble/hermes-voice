@@ -1,3 +1,4 @@
+import asyncio
 from uuid import UUID, uuid4
 
 from hermes_voice.domain.entities import (
@@ -54,8 +55,11 @@ class ProcessVoiceMessage:
     async def execute(
         self, audio: AudioInput, conversation_id: UUID | None = None
     ) -> tuple[AudioOutput, Conversation, Task | None]:
-        # 1. STT
-        transcript: Transcript = await self._stt.transcribe(audio)
+        # 1. STT + load context in parallel
+        transcript_task = asyncio.create_task(self._stt.transcribe(audio))
+        context_task = asyncio.create_task(self._context_provider.load())
+
+        transcript: Transcript = await transcript_task
 
         # Guard: empty transcript = nothing to process
         if not transcript.text.strip():
@@ -63,8 +67,8 @@ class ProcessVoiceMessage:
             conversation = Conversation(id=conversation_id or uuid4())
             return audio_output, conversation, None
 
-        # 2. Load context + conversation
-        agent_context: AgentContext = await self._context_provider.load()
+        # 2. Conversation
+        agent_context: AgentContext = await context_task
         system_prompt = agent_context.build_system_prompt()
 
         conversation: Conversation

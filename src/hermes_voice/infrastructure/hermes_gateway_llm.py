@@ -16,7 +16,7 @@ class HermesGatewayLLMAdapter(LLMPort):
         self,
         api_key: str,
         base_url: str = "http://localhost:8642",
-        model: str = "kimi-k2.6",
+        model: str = "google/gemini-2.0-flash-001",
     ) -> None:
         self._api_key = api_key
         self._base_url = base_url.rstrip("/")
