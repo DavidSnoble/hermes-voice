@@ -62,7 +62,9 @@ function connect() {
   };
 
   ws.onmessage = async (event) => {
+    console.log('WS message received, length:', event.data.length);
     const msg = JSON.parse(event.data);
+    console.log('WS message type:', msg.type);
 
     if (msg.type === 'response_audio') {
       if (msg.has_background_task) {
@@ -70,8 +72,11 @@ function connect() {
         updateTaskBadge();
       }
       setStatus('Hermes is speaking…', 'speaking');
+      console.log('Playing response audio, format:', msg.format, 'data length:', msg.data?.length);
       await playAudio(msg.data);
+      console.log('playAudio returned, resetting status');
       updateTaskBadge();
+      setStatus('Connected — hold to talk', 'connected');
     } else if (msg.type === 'proactive') {
       if (!isRecording) {
         setStatus('Hermes has an update…', 'speaking');
@@ -328,49 +333,64 @@ function blobToBase64(blob) {
 }
 
 async function playAudio(base64Data) {
-  if (!audioContext) audioContext = new (window.AudioContext || window.webkitAudioContext)();
+  console.log('playAudio called, base64 length:', base64Data?.length || 0);
 
-  // iOS Safari requires AudioContext to be resumed from a user gesture.
-  // By the time audio arrives, the gesture is long gone, so force-resume here.
-  if (audioContext.state === 'suspended') {
-    try {
-      await audioContext.resume();
-      console.log('AudioContext resumed from suspended');
-    } catch (e) {
-      console.warn('AudioContext resume failed:', e);
-    }
-  }
-  console.log('AudioContext state:', audioContext.state);
-
-  const byteString = atob(base64Data);
-  const buffer = new ArrayBuffer(byteString.length);
-  const view = new Uint8Array(buffer);
-  for (let i = 0; i < byteString.length; i++) {
-    view[i] = byteString.charCodeAt(i);
-  }
-
+  // --- Strategy 1: HTML5 <audio> element (most reliable on mobile) ---
   try {
-    const decoded = await audioContext.decodeAudioData(buffer);
-    const source = audioContext.createBufferSource();
-    source.buffer = decoded;
-    source.connect(audioContext.destination);
-    source.start(0);
-    console.log('Audio playback started, duration:', decoded.duration);
+    const byteString = atob(base64Data);
+    const array = new Uint8Array(byteString.length);
+    for (let i = 0; i < byteString.length; i++) {
+      array[i] = byteString.charCodeAt(i);
+    }
+    const blob = new Blob([array], { type: 'audio/mpeg' });
+    const url = URL.createObjectURL(blob);
+    console.log('Created audio blob URL, size:', blob.size);
 
-    // Promise resolves when audio finishes OR after a safety timeout
+    const audio = new Audio(url);
+
     return new Promise((resolve) => {
-      source.onended = () => {
-        console.log('Audio playback ended');
+      let resolved = false;
+      const cleanup = () => {
+        if (resolved) return;
+        resolved = true;
+        URL.revokeObjectURL(url);
+        console.log('Audio playback cleanup');
         resolve();
       };
-      // Safety timeout: if onended never fires (suspended context etc), resolve anyway
+
+      audio.onended = () => {
+        console.log('Audio playback ended naturally');
+        cleanup();
+      };
+      audio.onerror = (e) => {
+        console.error('Audio playback error:', e);
+        cleanup();
+      };
+      audio.onpause = () => {
+        console.log('Audio paused');
+        cleanup();
+      };
+
+      // Safety timeout
       setTimeout(() => {
-        console.warn('Audio playback safety timeout — forcing resolve');
-        resolve();
-      }, Math.max(decoded.duration * 1000 + 500, 3000));
+        console.warn('Audio safety timeout');
+        cleanup();
+      }, 15000);
+
+      const playPromise = audio.play();
+      if (playPromise) {
+        playPromise
+          .then(() => console.log('Audio.play() resolved successfully'))
+          .catch(err => {
+            console.error('Audio.play() rejected:', err.name, err.message);
+            cleanup();
+          });
+      } else {
+        console.log('Audio.play() returned undefined (older browser)');
+      }
     });
   } catch (e) {
-    console.error('Audio decode error:', e);
+    console.error('Audio element playback failed:', e);
     setStatus('Could not play audio');
   }
 }
