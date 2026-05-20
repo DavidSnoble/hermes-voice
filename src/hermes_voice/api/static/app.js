@@ -15,6 +15,7 @@ let reconnectTimer = null;
 let activeTasks = 0;
 let silenceTimer = null;
 let vadActive = false;
+let pingInterval = null;
 
 const VAD_THRESHOLD = 0.015;      // RMS amplitude threshold
 const VAD_SILENCE_MS = 1500;      // ms of silence before auto-stop
@@ -48,6 +49,13 @@ function connect() {
       clearTimeout(reconnectTimer);
       reconnectTimer = null;
     }
+    // Keep connection alive (mobile proxies love to kill idle sockets)
+    if (pingInterval) clearInterval(pingInterval);
+    pingInterval = setInterval(() => {
+      if (ws?.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({type: 'ping'}));
+      }
+    }, 15000);
   };
 
   ws.onmessage = async (event) => {
@@ -78,6 +86,10 @@ function connect() {
 
   ws.onclose = () => {
     setStatus('Disconnected — retrying…');
+    if (pingInterval) {
+      clearInterval(pingInterval);
+      pingInterval = null;
+    }
     reconnectTimer = setTimeout(connect, 3000);
   };
 
@@ -162,13 +174,25 @@ async function startRecording() {
 
     mediaRecorder.onstop = async () => {
       const blob = new Blob(audioChunks, { type: mimeType });
+      console.log('Recorded blob:', blob.size, 'bytes, type:', blob.type);
+
+      if (blob.size < 100) {
+        setStatus('Recording too short — try again');
+        isRecording = false;
+        micBtn.classList.remove('recording');
+        micBtn.classList.remove('hearing');
+        return;
+      }
+
       const base64 = await blobToBase64(blob);
+      const actualFormat = (blob.type || mimeType).includes('mp4') ? 'mp4' : 'webm';
+
       if (ws?.readyState === WebSocket.OPEN) {
         setStatus('Thinking…', 'thinking');
         ws.send(JSON.stringify({
           type: 'audio',
           data: base64,
-          format: 'webm',
+          format: actualFormat,
         }));
       } else {
         setStatus('Not connected');
@@ -204,7 +228,11 @@ function stopRecording(send = true) {
     if (!send) {
       mediaRecorder.onstop = null;
     }
-    mediaRecorder.stop();
+    try {
+      mediaRecorder.stop();
+    } catch (e) {
+      console.warn('MediaRecorder.stop() error:', e);
+    }
   }
 
   // Always stop the mic tracks
