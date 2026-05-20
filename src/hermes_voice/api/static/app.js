@@ -111,6 +111,14 @@ async function requestMicPermission() {
     micPermissionGranted = true;
     if (permOverlay) permOverlay.classList.add('hidden');
     setStatus('Connected — hold to talk', 'connected');
+
+    // Prime AudioContext from this user gesture — iOS Safari needs this
+    if (!audioContext) audioContext = new (window.AudioContext || window.webkitAudioContext)();
+    if (audioContext.state === 'suspended') {
+      await audioContext.resume();
+      console.log('AudioContext primed during permission grant');
+    }
+
     return true;
   } catch (err) {
     console.error('Mic permission denied:', err);
@@ -216,6 +224,12 @@ async function startRecording() {
   const recordStartTime = Date.now();
 
   try {
+    // Ensure AudioContext is running (user gesture → safe to resume)
+    if (audioContext && audioContext.state === 'suspended') {
+      await audioContext.resume();
+      console.log('AudioContext resumed on recording start');
+    }
+
     micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
 
     // Set up VAD monitoring via Web Audio API
@@ -316,6 +330,18 @@ function blobToBase64(blob) {
 async function playAudio(base64Data) {
   if (!audioContext) audioContext = new (window.AudioContext || window.webkitAudioContext)();
 
+  // iOS Safari requires AudioContext to be resumed from a user gesture.
+  // By the time audio arrives, the gesture is long gone, so force-resume here.
+  if (audioContext.state === 'suspended') {
+    try {
+      await audioContext.resume();
+      console.log('AudioContext resumed from suspended');
+    } catch (e) {
+      console.warn('AudioContext resume failed:', e);
+    }
+  }
+  console.log('AudioContext state:', audioContext.state);
+
   const byteString = atob(base64Data);
   const buffer = new ArrayBuffer(byteString.length);
   const view = new Uint8Array(buffer);
@@ -329,7 +355,20 @@ async function playAudio(base64Data) {
     source.buffer = decoded;
     source.connect(audioContext.destination);
     source.start(0);
-    return new Promise((resolve) => { source.onended = resolve; });
+    console.log('Audio playback started, duration:', decoded.duration);
+
+    // Promise resolves when audio finishes OR after a safety timeout
+    return new Promise((resolve) => {
+      source.onended = () => {
+        console.log('Audio playback ended');
+        resolve();
+      };
+      // Safety timeout: if onended never fires (suspended context etc), resolve anyway
+      setTimeout(() => {
+        console.warn('Audio playback safety timeout — forcing resolve');
+        resolve();
+      }, Math.max(decoded.duration * 1000 + 500, 3000));
+    });
   } catch (e) {
     console.error('Audio decode error:', e);
     setStatus('Could not play audio');
