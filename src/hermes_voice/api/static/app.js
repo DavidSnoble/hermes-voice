@@ -144,6 +144,12 @@ function startVadMonitoring() {
 
 async function startRecording() {
   if (isRecording) return;
+
+  if (!window.MediaRecorder) {
+    setStatus('Your browser does not support voice recording. Try Chrome or Safari.');
+    return;
+  }
+
   isRecording = true;
   micBtn.classList.add('recording');
   setStatus('Listening…', 'thinking');
