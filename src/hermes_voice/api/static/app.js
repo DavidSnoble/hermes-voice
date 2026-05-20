@@ -3,6 +3,8 @@
 const statusEl = document.getElementById('status');
 const micBtn = document.getElementById('micBtn');
 const transcriptEl = document.getElementById('transcript');
+const permOverlay = document.getElementById('permOverlay');
+const permBtn = document.getElementById('permBtn');
 
 let ws = null;
 let mediaRecorder = null;
@@ -16,6 +18,7 @@ let activeTasks = 0;
 let silenceTimer = null;
 let vadActive = false;
 let pingInterval = null;
+let micPermissionGranted = false;
 
 const VAD_THRESHOLD = 0.015;      // RMS amplitude threshold
 const VAD_SILENCE_MS = 1500;      // ms of silence before auto-stop
@@ -98,6 +101,53 @@ function connect() {
   };
 }
 
+// --- Microphone permission (pre-warm so push-to-talk is instant) ---
+
+async function requestMicPermission() {
+  if (micPermissionGranted) return true;
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    stream.getTracks().forEach(t => t.stop());
+    micPermissionGranted = true;
+    if (permOverlay) permOverlay.classList.add('hidden');
+    setStatus('Connected — hold to talk', 'connected');
+    return true;
+  } catch (err) {
+    console.error('Mic permission denied:', err);
+    setStatus('Microphone access denied');
+    return false;
+  }
+}
+
+// On load, try silently (works on desktop if already allowed)
+// On mobile this will fail without a gesture → show overlay
+if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+  navigator.mediaDevices.getUserMedia({ audio: true })
+    .then(stream => {
+      stream.getTracks().forEach(t => t.stop());
+      micPermissionGranted = true;
+      if (permOverlay) permOverlay.classList.add('hidden');
+    })
+    .catch(() => {
+      if (permOverlay) permOverlay.classList.remove('hidden');
+    });
+} else {
+  setStatus('Browser does not support audio input');
+}
+
+if (permOverlay) {
+  permOverlay.addEventListener('click', (e) => {
+    e.stopPropagation();
+    requestMicPermission();
+  });
+}
+if (permBtn) {
+  permBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    requestMicPermission();
+  });
+}
+
 function getRms(buffer) {
   let sum = 0;
   for (let i = 0; i < buffer.length; i++) {
@@ -147,6 +197,13 @@ async function startRecording() {
 
   if (!window.MediaRecorder) {
     setStatus('Your browser does not support voice recording. Try Chrome or Safari.');
+    return;
+  }
+
+  if (!micPermissionGranted) {
+    // Permission not yet granted → show overlay instead of blocking on dialog
+    if (permOverlay) permOverlay.classList.remove('hidden');
+    setStatus('Tap "Enable Microphone" first');
     return;
   }
 

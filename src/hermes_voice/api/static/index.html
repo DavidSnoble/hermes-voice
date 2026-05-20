@@ -87,9 +87,38 @@
             width: 100%;
             padding: 0 1rem;
         }
+        .perm-overlay {
+            position: fixed;
+            inset: 0;
+            background: rgba(15, 15, 26, 0.95);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 1.5rem;
+            z-index: 100;
+            cursor: pointer;
+        }
+        .perm-overlay.hidden { display: none; }
+        .perm-overlay h2 { font-size: 1.4rem; color: #e2e8f0; }
+        .perm-overlay p { color: #94a3b8; font-size: 1rem; max-width: 80%; text-align: center; }
+        .perm-overlay .perm-btn {
+            padding: 1rem 2rem;
+            border-radius: 12px;
+            background: #3b82f6;
+            color: white;
+            font-size: 1.1rem;
+            border: none;
+            cursor: pointer;
+        }
     </style>
 </head>
 <body>
+    <div class="perm-overlay hidden" id="permOverlay">
+        <h2>Enable Microphone</h2>
+        <p>Tap below to allow microphone access. You only need to do this once.</p>
+        <button class="perm-btn" id="permBtn">Enable Microphone</button>
+    </div>
     <div class="container">
         <div class="status" id="status">Tap and hold to talk</div>
         <button class="mic-btn" id="micBtn" aria-label="Hold to talk">🎙️</button>
